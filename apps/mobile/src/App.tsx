@@ -1,7 +1,12 @@
 import React from 'react';
-import { normalizeThought } from '@thoughtz/core';
-import type { Thought } from '@thoughtz/core';
-import { LynxButton, LynxScrollView, LynxText, LynxView } from '@thoughtz/lynx';
+import type { Thought } from '@enso/core';
+import {
+  HttpThoughtRepository,
+  readCachedThoughts,
+  writeCachedThoughts,
+  stripWorkspaceMetadata
+} from '@enso/core';
+import { LynxButton, LynxScrollView, LynxText, LynxView } from '@enso/lynx';
 
 const containerStyle: React.CSSProperties = {
   gap: 24,
@@ -26,24 +31,6 @@ const tagPillStyle: React.CSSProperties = {
   fontSize: 12,
   textTransform: 'lowercase'
 };
-
-const seedThoughts = (): Thought[] => [
-  normalizeThought({
-    title: 'Tap to capture',
-    content: 'Mobile-first capture flow with offline buffering.',
-    tags: ['mobile', 'capture']
-  }),
-  normalizeThought({
-    title: 'Daily review ritual',
-    content: 'Guide users through the morning review in three swipes.',
-    tags: ['ritual']
-  }),
-  normalizeThought({
-    title: 'Link via swipe',
-    content: 'Long-press to reveal relationship actions between thoughts.',
-    tags: ['links']
-  })
-];
 
 const ThoughtCard: React.FC<{ thought: Thought; onInspect: (thought: Thought) => void }> = ({ thought, onInspect }) => (
   <LynxView style={cardStyle}>
@@ -81,17 +68,83 @@ const ThoughtDetail: React.FC<{ thought: Thought | null }> = ({ thought }) => {
   );
 };
 
-export const ThoughtzMobileApp: React.FC = () => {
-  const [thoughts] = React.useState<Thought[]>(() => seedThoughts());
+export const EnsoMobileApp: React.FC = () => {
+  const repositoryRef = React.useRef<HttpThoughtRepository | null>(null);
+  if (!repositoryRef.current) {
+    repositoryRef.current = new HttpThoughtRepository();
+  }
+
+  const [thoughts, setThoughts] = React.useState<Thought[]>(() =>
+    readCachedThoughts().map((thought) => stripWorkspaceMetadata(thought))
+  );
   const [selected, setSelected] = React.useState<Thought | null>(() => thoughts[0] ?? null);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+
+  React.useEffect(() => {
+    const repo = repositoryRef.current!;
+    let cancelled = false;
+
+    const load = async () => {
+      setIsRefreshing(true);
+      try {
+        const remote = await repo.list();
+        if (cancelled) {
+          return;
+        }
+        writeCachedThoughts(remote);
+        setThoughts(remote.map((thought) => stripWorkspaceMetadata(thought)));
+      } catch (error) {
+        console.warn('Unable to refresh mobile thoughts', error);
+      } finally {
+        if (!cancelled) {
+          setIsRefreshing(false);
+        }
+      }
+    };
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!thoughts.length) {
+      setSelected(null);
+      return;
+    }
+
+    if (!selected || !thoughts.some((thought) => thought.id === selected.id)) {
+      setSelected(thoughts[0]);
+    }
+  }, [thoughts, selected]);
 
   return (
     <LynxView style={containerStyle}>
-      <LynxText style={{ fontSize: 24, fontWeight: 700 }}>Thoughtz Lynx Playground</LynxText>
+      <LynxText style={{ fontSize: 24, fontWeight: 700 }}>Enso Lynx Playground</LynxText>
       <LynxText style={{ color: '#4b5874' }}>
         This mock demonstrates how the Lynx runtime can render React-driven views before the native host is
         ready. Replace the primitives with actual Lynx components once the SDK is available.
       </LynxText>
+
+      <LynxButton
+        label={isRefreshing ? 'Refreshing…' : 'Refresh'}
+        onPress={() => {
+          const repo = repositoryRef.current!;
+          setIsRefreshing(true);
+          repo
+            .list()
+            .then((remote) => {
+              writeCachedThoughts(remote);
+              setThoughts(remote.map((thought) => stripWorkspaceMetadata(thought)));
+            })
+            .catch((error) => {
+              console.warn('Unable to refresh thoughts', error);
+            })
+            .finally(() => setIsRefreshing(false));
+        }}
+      />
 
       <LynxScrollView style={{ gap: 12 }}>
         {thoughts.map((thought) => (

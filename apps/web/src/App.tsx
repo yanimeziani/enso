@@ -1,13 +1,28 @@
 import React from 'react';
-import type { CollectionId, WorkspaceStatus, WorkspaceEntry } from './workspaceData';
+import type { Thought, WorkspaceEntry, AIClientMode, AIHealthResponse } from '@enso/core';
+import {
+  HttpThoughtRepository,
+  workspaceEntryFromThought,
+  toPersistableThought,
+  readCachedThoughts,
+  writeCachedThoughts,
+  readPendingChanges,
+  appendPendingChange,
+  syncThoughts
+} from '@enso/core';
+import type { CollectionId, WorkspaceStatus } from './workspaceData';
 import { workspaceEntries } from './workspaceData';
 import { useWorkspace } from './hooks/useWorkspace';
 import { useSuggestionPalette } from './suggestions/useSuggestionPalette';
 import { CommandPalette } from './suggestions/CommandPalette';
 import type { SuggestionNode } from './suggestions/data';
-import { CaptureBox, CaptureBoxHandle } from './components/CaptureBox';
 import { CaptureEditor } from './components/CaptureEditor';
+import { EditorToolbar } from './components/EditorToolbar';
 import { FlowList } from './components/FlowList';
+import { configureAIClient, fetchAIHealth } from './services/aiClient';
+import { readAISettings, writeAISettings, availableAIModes, type AISettings } from './settings/aiSettings';
+import { useAISearchResults } from './hooks/useAISearchResults';
+import { useAISummary } from './hooks/useAISummary';
 
 import './App.css';
 
@@ -31,11 +46,19 @@ const momentumProgress: Record<'flow' | 'steady' | 'parked', number> = {
   parked: 25
 };
 
+type AIServiceStatus = 'disabled' | 'checking' | 'ok' | 'unavailable';
+
 type UsageState = {
   captures: number;
   focusCaptures: number;
   tagCaptures: number;
   paletteActivations: number;
+};
+
+type PaletteCaptureDefaults = {
+  label: string;
+  tags: string[];
+  collection: CollectionId;
 };
 
 const DEFAULT_USAGE: UsageState = {
@@ -46,10 +69,6 @@ const DEFAULT_USAGE: UsageState = {
 };
 
 const USAGE_STORAGE_KEY = 'enso.usage.v1';
-const CAPTURE_VISIBILITY_STORAGE_KEY = 'enso.capture.visibility.v1';
-
-type CaptureVisibility = 'expanded' | 'collapsed' | 'hidden';
-
 type UndoState =
   | {
       kind: 'capture';
@@ -80,6 +99,7 @@ const cloneEntry = (entry: WorkspaceEntry): WorkspaceEntry => ({
 });
 
 const App: React.FC = () => {
+  const workspaceState = useWorkspace(workspaceEntries);
   const {
     collections,
     activeCollection,
@@ -91,15 +111,81 @@ const App: React.FC = () => {
     activeThought,
     selectThought,
     metrics,
-    updateThought,
-    createThought,
+    updateThought: updateThoughtLocal,
+    createThought: createThoughtLocal,
     updateStatus,
     getEntrySnapshot,
     replaceEntry,
-    removeThought,
+    removeThought: removeThoughtLocal,
     nowEntries,
-    inboxEntries
-  } = useWorkspace(workspaceEntries);
+    inboxEntries,
+    hydrate
+  } = workspaceState;
+
+  const [aiSettings, setAISettings] = React.useState<AISettings>(() => readAISettings());
+  const [aiHealth, setAiHealth] = React.useState<AIHealthResponse | null>(null);
+  const [aiHealthError, setAiHealthError] = React.useState<Error | null>(null);
+
+  React.useEffect(() => {
+    configureAIClient({
+      enabled: aiSettings.enabled,
+      mode: aiSettings.mode
+    });
+    writeAISettings(aiSettings);
+  }, [aiSettings.enabled, aiSettings.mode]);
+
+  React.useEffect(() => {
+    if (!aiSettings.enabled) {
+      setAiHealth({ status: 'ok', detail: 'AI suggestions disabled', mode: aiSettings.mode, enabled: false });
+      setAiHealthError(null);
+      return;
+    }
+
+    let cancelled = false;
+    fetchAIHealth()
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setAiHealth(response);
+        setAiHealthError(null);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        setAiHealth({ status: 'unavailable', detail, mode: aiSettings.mode, enabled: true });
+        setAiHealthError(error instanceof Error ? error : new Error(detail));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [aiSettings.enabled, aiSettings.mode]);
+
+  const aiStatus: AIServiceStatus = React.useMemo(() => {
+    if (!aiSettings.enabled) {
+      return 'disabled';
+    }
+    if (!aiHealth) {
+      return 'checking';
+    }
+    return aiHealth.status === 'ok' ? 'ok' : 'unavailable';
+  }, [aiSettings.enabled, aiHealth]);
+
+  const aiDetail: string | null = React.useMemo(() => {
+    if (aiStatus === 'disabled') {
+      return 'AI suggestions are turned off.';
+    }
+    if (aiHealth?.detail) {
+      return aiHealth.detail;
+    }
+    if (aiHealthError) {
+      return aiHealthError.message;
+    }
+    return null;
+  }, [aiStatus, aiHealth, aiHealthError]);
 
   const [usage, setUsage] = React.useState<UsageState>(() => {
     if (typeof window === 'undefined') {
@@ -131,29 +217,19 @@ const App: React.FC = () => {
       return DEFAULT_USAGE;
     }
   });
-  const [captureVisibility, setCaptureVisibility] = React.useState<CaptureVisibility>(() => {
-    if (typeof window === 'undefined') {
-      return 'expanded';
-    }
-    try {
-      const stored = window.localStorage.getItem(CAPTURE_VISIBILITY_STORAGE_KEY);
-      if (stored === 'collapsed' || stored === 'hidden') {
-        return stored;
-      }
-    } catch (error) {
-      console.warn('Unable to read capture visibility cache', error);
-    }
-    return 'expanded';
-  });
-
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [paletteQuery, setPaletteQuery] = React.useState('');
   const [highlightIndex, setHighlightIndex] = React.useState(-1);
+  const toggleAISettings = React.useCallback(() => {
+    setAISettings((current) => ({ ...current, enabled: !current.enabled }));
+  }, []);
+  const updateAiMode = React.useCallback((mode: AIClientMode) => {
+    setAISettings((current) => ({ ...current, mode }));
+  }, []);
   const saveTimeoutRef = React.useRef<number | null>(null);
   const settleTimeoutRef = React.useRef<number | null>(null);
   const syncTimeoutRef = React.useRef<number | null>(null);
   const [savingState, setSavingState] = React.useState<'idle' | 'saving' | 'saved'>('idle');
-  const captureRef = React.useRef<CaptureBoxHandle | null>(null);
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
   const [activeTag, setActiveTag] = React.useState<'all' | string>('all');
   const [syncState, setSyncState] = React.useState<'idle' | 'pending' | 'conflict'>('idle');
@@ -161,43 +237,143 @@ const App: React.FC = () => {
   const recentMoveTimeoutRef = React.useRef<number | null>(null);
   const [undoState, setUndoState] = React.useState<UndoState | null>(null);
   const undoTimeoutRef = React.useRef<number | null>(null);
-  const [toolbarExpanded, setToolbarExpanded] = React.useState(false);
-  const focusCapture = React.useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.requestAnimationFrame(() => captureRef.current?.focus());
+  const [previewMode, setPreviewMode] = React.useState<'overlay' | 'split'>('overlay');
+  const [paletteMode, setPaletteMode] = React.useState<'suggestions' | 'capture'>('suggestions');
+
+  const repositoryRef = React.useRef<HttpThoughtRepository | null>(null);
+  if (!repositoryRef.current) {
+    repositoryRef.current = new HttpThoughtRepository();
+  }
+  const repository = repositoryRef.current;
+
+  const [, setThoughts] = React.useState<Thought[]>(() => []);
+  const [pendingChanges, setPendingChanges] = React.useState(() => readPendingChanges());
+
+  const sortThoughts = React.useCallback((list: Thought[]): Thought[] => {
+    return [...list].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  }, []);
+
+  const applyThoughtList = React.useCallback(
+    (next: Thought[]) => {
+      const sorted = sortThoughts(next);
+      setThoughts(sorted);
+      writeCachedThoughts(sorted);
+      hydrate(sorted.map((thought) => workspaceEntryFromThought(thought)));
+    },
+    [hydrate, sortThoughts]
+  );
+
+  const updateThoughtState = React.useCallback(
+    (updater: (prev: Thought[]) => Thought[]) => {
+      setThoughts((prev) => {
+        const next = updater(prev);
+        const sorted = sortThoughts(next);
+        writeCachedThoughts(sorted);
+        hydrate(sorted.map((thought) => workspaceEntryFromThought(thought)));
+        return sorted;
+      });
+    },
+    [hydrate, sortThoughts]
+  );
+
+  const mergeThoughtLists = React.useCallback((current: Thought[], incoming: Thought[]) => {
+    const map = new Map(current.map((thought) => [thought.id, thought]));
+
+    for (const thought of incoming) {
+      const existing = map.get(thought.id);
+      if (!existing) {
+        map.set(thought.id, thought);
+        continue;
+      }
+
+      const nextTime = Date.parse(thought.updatedAt);
+      const currentTime = Date.parse(existing.updatedAt);
+      if (Number.isNaN(currentTime) || Number.isNaN(nextTime) || nextTime >= currentTime) {
+        map.set(thought.id, thought);
+      }
+    }
+
+    return Array.from(map.values());
+  }, []);
+
+  const applySyncChanges = React.useCallback(
+    (changes: Thought[]) => {
+      if (!changes.length) {
+        return;
+      }
+      updateThoughtState((prev) => mergeThoughtLists(prev, changes));
+    },
+    [mergeThoughtLists, updateThoughtState]
+  );
+
+  const queuePendingChange = React.useCallback(
+    (kind: 'upsert' | 'delete', thought: Thought) => {
+      const next = appendPendingChange({ kind, thought });
+      setPendingChanges(next);
+    },
+    []
+  );
+
+  React.useEffect(() => {
+    const cached = readCachedThoughts();
+    if (cached.length) {
+      applyThoughtList(cached);
+    } else {
+      hydrate(workspaceEntries);
+    }
+
+    const pending = readPendingChanges();
+    setPendingChanges(pending);
+    if (pending.length) {
+      setSyncState('conflict');
+    }
+
+    const loadRemote = async () => {
+      try {
+        const remote = await repository.list();
+        applyThoughtList(remote);
+        setSyncState('idle');
+      } catch (error) {
+        console.warn('Unable to fetch thoughts', error);
+        if (!cached.length && pending.length === 0) {
+          setSyncState('conflict');
+        }
+      }
+    };
+
+    loadRemote();
+  }, [applyThoughtList, hydrate, repository]);
+
+  React.useEffect(() => {
+    if (!pendingChanges.length) {
       return;
     }
-    captureRef.current?.focus();
-  }, []);
-  const ensureCaptureExpanded = React.useCallback(() => {
-    let changed = false;
-    setCaptureVisibility((current) => {
-      if (current === 'expanded') {
-        return current;
+
+    let cancelled = false;
+    const run = async () => {
+      setSyncState('pending');
+      try {
+        const result = await syncThoughts();
+        if (!cancelled) {
+          applySyncChanges(result.changes);
+          setPendingChanges([]);
+          setSyncState('idle');
+        }
+      } catch (error) {
+        console.warn('Unable to sync pending thoughts', error);
+        if (!cancelled) {
+          setSyncState('conflict');
+        }
       }
-      changed = true;
-      return 'expanded';
-    });
-    return changed;
-  }, []);
-  const toggleCaptureCollapse = React.useCallback(() => {
-    setCaptureVisibility((current) => (current === 'collapsed' ? 'expanded' : 'collapsed'));
-  }, []);
-  const dismissCapture = React.useCallback(() => {
-    setCaptureVisibility('hidden');
-  }, []);
-  const revealCapture = React.useCallback(() => {
-    const changed = ensureCaptureExpanded();
-    if (changed) {
-      if (typeof window !== 'undefined') {
-        window.setTimeout(() => focusCapture(), 0);
-      } else {
-        focusCapture();
-      }
-      return;
-    }
-    focusCapture();
-  }, [ensureCaptureExpanded, focusCapture]);
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingChanges, applySyncChanges]);
+  const [paletteCaptureDefaults, setPaletteCaptureDefaults] = React.useState<PaletteCaptureDefaults | null>(null);
   const scheduleUndo = React.useCallback((state: UndoState) => {
     if (typeof window !== 'undefined' && undoTimeoutRef.current) {
       window.clearTimeout(undoTimeoutRef.current);
@@ -274,45 +450,128 @@ const App: React.FC = () => {
     window.localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(usage));
   }, [usage]);
 
-  React.useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    try {
-      window.localStorage.setItem(CAPTURE_VISIBILITY_STORAGE_KEY, captureVisibility);
-    } catch (error) {
-      console.warn('Unable to persist capture visibility', error);
-    }
-  }, [captureVisibility]);
-
   const markUnsynced = React.useCallback((source: 'capture' | 'edit') => {
-    setSyncState((current) => {
-      const nextState = current === 'pending' && source === 'capture' ? 'conflict' : 'pending';
-      if (syncTimeoutRef.current) {
-        window.clearTimeout(syncTimeoutRef.current);
-        syncTimeoutRef.current = null;
-      }
-      if (nextState === 'pending') {
-        syncTimeoutRef.current = window.setTimeout(() => {
-          setSyncState('idle');
-          syncTimeoutRef.current = null;
-        }, source === 'capture' ? 1400 : 900);
-      }
-      return nextState;
-    });
-  }, []);
-
-  const resolveConflicts = React.useCallback(() => {
-    setSyncState('pending');
+    setSyncState((current) => (current === 'conflict' ? current : 'pending'));
     if (syncTimeoutRef.current) {
       window.clearTimeout(syncTimeoutRef.current);
     }
     syncTimeoutRef.current = window.setTimeout(() => {
-      setSyncState('idle');
+      setSyncState((current) => (current === 'pending' ? 'idle' : current));
       syncTimeoutRef.current = null;
-    }, 1200);
+    }, source === 'capture' ? 1400 : 900);
   }, []);
+
+  const resolveConflicts = React.useCallback(() => {
+    const pending = readPendingChanges();
+    if (pending.length) {
+      setPendingChanges(pending);
+      return;
+    }
+
+    setSyncState('pending');
+    repository
+      .list()
+      .then((remote) => {
+        applyThoughtList(remote);
+        setSyncState('idle');
+      })
+      .catch((error) => {
+        console.warn('Failed to refresh thoughts', error);
+        setSyncState('conflict');
+      });
+  }, [applyThoughtList, repository]);
+
+  const createThought = React.useCallback(
+    (input: {
+      content: string;
+      tags: string[];
+      title?: string;
+      collection?: CollectionId;
+      status?: WorkspaceStatus;
+    }) => {
+      const entry = createThoughtLocal(input);
+      const persistable = toPersistableThought(entry);
+      updateThoughtState((prev) => mergeThoughtLists(prev, [persistable]));
+      markUnsynced('capture');
+
+      void repository
+        .create(persistable)
+        .then((created) => {
+          updateThoughtState((prev) => mergeThoughtLists(prev, [created]));
+          replaceEntry(workspaceEntryFromThought(created));
+          setSyncState('idle');
+        })
+        .catch((error) => {
+          console.warn('Capture queued for sync', error);
+          queuePendingChange('upsert', persistable);
+          setSyncState('conflict');
+        });
+
+      return entry;
+    },
+    [createThoughtLocal, mergeThoughtLists, markUnsynced, repository, replaceEntry, updateThoughtState, queuePendingChange]
+  );
+
+  const updateThought = React.useCallback(
+    (id: Thought['id'], patch: { title?: string; content?: string; tags?: string[] }) => {
+      const updatedEntry = updateThoughtLocal(id, patch);
+      if (!updatedEntry) {
+        return;
+      }
+
+      const persistable = toPersistableThought(updatedEntry);
+      updateThoughtState((prev) => mergeThoughtLists(prev, [persistable]));
+      markUnsynced('edit');
+
+      void repository
+        .update(id, {
+          title: persistable.title,
+          content: persistable.content,
+          tags: persistable.tags,
+          links: persistable.links,
+          updatedAt: persistable.updatedAt
+        })
+        .then((updated) => {
+          updateThoughtState((prev) => mergeThoughtLists(prev, [updated]));
+          replaceEntry(workspaceEntryFromThought(updated));
+          setSyncState('idle');
+        })
+        .catch((error) => {
+          console.warn('Update queued for sync', error);
+          queuePendingChange('upsert', persistable);
+          setSyncState('conflict');
+        });
+    },
+    [updateThoughtLocal, updateThoughtState, mergeThoughtLists, markUnsynced, repository, replaceEntry, queuePendingChange]
+  );
+
+  const removeThought = React.useCallback(
+    (id: Thought['id']) => {
+      const removed = removeThoughtLocal(id);
+      if (!removed) {
+        return null;
+      }
+
+      updateThoughtState((prev) => prev.filter((thought) => thought.id !== id));
+      markUnsynced('edit');
+
+      void repository
+        .remove(id)
+        .then(() => {
+          setSyncState('idle');
+        })
+        .catch((error) => {
+          console.warn('Unable to delete thought, restoring', error);
+          const restored = toPersistableThought(removed);
+          updateThoughtState((prev) => mergeThoughtLists(prev, [restored]));
+          replaceEntry(removed);
+          setSyncState('conflict');
+        });
+
+      return removed;
+    },
+    [removeThoughtLocal, updateThoughtState, markUnsynced, repository, mergeThoughtLists, replaceEntry]
+  );
 
   const activeTags = React.useMemo(() => {
     if (activeTag !== 'all') {
@@ -322,12 +581,59 @@ const App: React.FC = () => {
     return activeThought?.thought.tags ?? [];
   }, [activeTag, activeThought]);
 
-  const palette = useSuggestionPalette({
+  const basePalette = useSuggestionPalette({
     query: paletteQuery,
     activeCollection,
     activeThoughtId: activeThought?.thought.id,
     activeTags
   });
+
+  const aiPaletteNodes = React.useMemo<SuggestionNode[]>(() => {
+    const nodes: SuggestionNode[] = [];
+    const statusContext = aiStatus === 'unavailable' ? 'Model unavailable' : `Mode: ${aiSettings.mode}`;
+
+    nodes.push({
+      id: aiSettings.enabled ? 'ai-disable' : 'ai-enable',
+      label: aiSettings.enabled ? 'Disable AI suggestions' : 'Enable AI suggestions',
+      context: statusContext,
+      intent: 'capture',
+      collection: activeCollection,
+      action: toggleAISettings,
+      snippet: aiDetail ?? undefined
+    });
+
+    if (aiSettings.enabled) {
+      const modeDescriptions: Record<AIClientMode, string> = {
+        auto: 'Let Enso choose the best runner',
+        local: 'Prefer on-device model',
+        remote: 'Use remote inference endpoint',
+        stub: 'Return sample responses'
+      };
+
+      availableAIModes
+        .filter((mode) => mode !== aiSettings.mode)
+        .forEach((mode) => {
+          nodes.push({
+            id: `ai-mode-${mode}`,
+            label: `Switch AI mode to ${mode}`,
+            context: modeDescriptions[mode],
+            intent: 'capture',
+            collection: activeCollection,
+            action: () => updateAiMode(mode)
+          });
+        });
+    }
+
+    return nodes;
+  }, [aiSettings.enabled, aiSettings.mode, aiStatus, aiDetail, activeCollection, toggleAISettings, updateAiMode]);
+
+  const palette = React.useMemo(() => {
+    const mergedSpotlights = [...aiPaletteNodes, ...basePalette.spotlights];
+    return {
+      spotlights: mergedSpotlights.slice(0, 6),
+      contextGroup: basePalette.contextGroup
+    };
+  }, [aiPaletteNodes, basePalette]);
 
   const flatSuggestions = React.useMemo(
     () => [...palette.spotlights, ...(palette.contextGroup?.nodes ?? [])],
@@ -347,12 +653,29 @@ const App: React.FC = () => {
 
   const openPalette = React.useCallback(() => {
     registerPaletteActivation();
+    setPaletteMode('suggestions');
+    setPaletteCaptureDefaults(null);
     setPaletteOpen(true);
   }, [registerPaletteActivation]);
+
+  const showCaptureCenter = React.useCallback((defaults?: PaletteCaptureDefaults | null) => {
+    setPaletteMode('capture');
+    setPaletteCaptureDefaults(defaults ?? null);
+    setPaletteQuery('');
+    setHighlightIndex(-1);
+    setPaletteOpen(true);
+  }, []);
+
+  const openCaptureCenter = React.useCallback(() => {
+    registerPaletteActivation();
+    showCaptureCenter(null);
+  }, [registerPaletteActivation, showCaptureCenter]);
 
   const closePalette = React.useCallback(() => {
     setPaletteOpen(false);
     setHighlightIndex(-1);
+    setPaletteMode('suggestions');
+    setPaletteCaptureDefaults(null);
   }, []);
 
   React.useEffect(() => {
@@ -395,6 +718,22 @@ const App: React.FC = () => {
 
   const handleSuggestionSelect = React.useCallback(
     (node: SuggestionNode) => {
+      if (node.action) {
+        node.action();
+        closePalette();
+        setPaletteQuery('');
+        return;
+      }
+
+      if (node.intent === 'capture') {
+        showCaptureCenter({
+          label: node.label,
+          tags: node.tags ?? [],
+          collection: node.collection
+        });
+        return;
+      }
+
       setActiveTag('all');
 
       if (node.collection !== activeCollection) {
@@ -408,7 +747,14 @@ const App: React.FC = () => {
       closePalette();
       setPaletteQuery('');
     },
-    [activeCollection, closePalette, selectThought, setActiveTag, setCollection]
+    [
+      activeCollection,
+      closePalette,
+      selectThought,
+      setActiveTag,
+      setCollection,
+      showCaptureCenter
+    ]
   );
 
   const handleSuggestionHover = React.useCallback((index: number) => {
@@ -429,11 +775,24 @@ const App: React.FC = () => {
   }, [setQuery]);
 
   const handleCapture = React.useCallback(
-    ({ text, tags, focus, project }: { text: string; tags: string[]; focus: boolean; project?: string }) => {
+    ({
+      text,
+      tags,
+      focus,
+      project,
+      collectionOverride
+    }: {
+      text: string;
+      tags: string[];
+      focus: boolean;
+      project?: string;
+      collectionOverride?: CollectionId;
+    }) => {
       const previousCollection = activeCollection;
       const previousActiveThoughtId = activeThought?.thought.id ?? '';
       const previousActiveTag = activeTag;
-      const collection: CollectionId = project ? 'projects' : focus ? 'daily-review' : 'inbox';
+      const collection: CollectionId =
+        collectionOverride ?? (project ? 'projects' : focus ? 'daily-review' : 'inbox');
       const status: WorkspaceStatus = focus ? 'now' : 'inbox';
 
       const entry = createThought({
@@ -535,27 +894,9 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleCreateThought = () => {
-    setToolbarExpanded(true);
-    const changed = ensureCaptureExpanded();
-    if (changed) {
-      if (typeof window !== 'undefined') {
-        window.setTimeout(() => focusCapture(), 0);
-      } else {
-        focusCapture();
-      }
-      return;
-    }
-    focusCapture();
-  };
-
-  const toggleToolbar = React.useCallback(() => {
-    if (toolbarExpanded) {
-      setToolbarExpanded(false);
-      return;
-    }
-    handleCreateThought();
-  }, [handleCreateThought, toolbarExpanded]);
+  const handleCreateThought = React.useCallback(() => {
+    openCaptureCenter();
+  }, [openCaptureCenter]);
 
   const handleFlowAction = React.useCallback(
     (id: string, action: 'done' | 'focus' | 'archive') => {
@@ -591,8 +932,51 @@ const App: React.FC = () => {
     [getEntrySnapshot, updateStatus, markUnsynced, markRecentlyMoved, scheduleUndo]
   );
 
-  const searchTerm = React.useMemo(() => query.trim().toLowerCase(), [query]);
+  const handleTogglePreview = React.useCallback(() => {
+    setPreviewMode((current) => (current === 'overlay' ? 'split' : 'overlay'));
+  }, []);
+
+  const handlePaletteCaptureSubmit = React.useCallback(
+    ({
+      text,
+      tags,
+      focus,
+      project,
+      collectionOverride
+    }: {
+      text: string;
+      tags: string[];
+      focus: boolean;
+      project?: string;
+      collectionOverride?: CollectionId;
+    }) => {
+      handleCapture({
+        text,
+        tags,
+        focus,
+        project,
+        collectionOverride
+      });
+      closePalette();
+    },
+    [closePalette, handleCapture]
+  );
+
+  const handlePaletteCaptureCancel = React.useCallback(() => {
+    setPaletteMode('suggestions');
+    setPaletteCaptureDefaults(null);
+    setHighlightIndex(0);
+  }, []);
+
+  const rawSearchQuery = React.useMemo(() => query.trim(), [query]);
+  const searchTerm = React.useMemo(() => rawSearchQuery.toLowerCase(), [rawSearchQuery]);
   const searchActive = Boolean(searchTerm);
+
+  const aiSearch = useAISearchResults(rawSearchQuery, {
+    enabled: aiSettings.enabled && aiStatus === 'ok',
+    mode: aiSettings.mode,
+    debounceMs: 450
+  });
 
   const collectionEntries = entries;
 
@@ -628,32 +1012,40 @@ const App: React.FC = () => {
       return 'Capture a quick thought. Press ⌘ + Enter when ready.';
     }
     if (!advancedUnlocked) {
-      return 'Capture what’s on your mind. Add details later if needed.';
+      return "Capture what's on your mind. Add details later if needed.";
     }
-    return 'Capture what’s on your mind. Layer #tags or !focus when it helps.';
+    return "Capture what's on your mind. Layer #tags or !focus when it helps.";
   }, [advancedUnlocked, usage.captures]);
   const showCommandShortcuts = usage.captures >= 1 || advancedUnlocked;
 
+  const captureAiOptions = React.useMemo(
+    () => ({
+      enabled: aiSettings.enabled && aiStatus === 'ok',
+      mode: aiSettings.mode,
+      status: aiStatus,
+      detail: aiDetail
+    }),
+    [aiSettings.enabled, aiSettings.mode, aiStatus, aiDetail]
+  );
+
   const openPaletteFromCapture = React.useCallback(() => {
-    setPaletteQuery('');
-    setHighlightIndex(0);
-    openPalette();
-  }, [openPalette]);
+    openCaptureCenter();
+  }, [openCaptureCenter]);
 
   const editorMicrocopy = React.useMemo(() => {
     if (!activeThought) {
       if (searchActive) {
-        return 'Search or pick a thought from the toolbox to start editing.';
+        return 'Search results appear below. Choose a thought to edit.';
       }
 
       if (collectionEntries.length) {
-        return 'Select a thought from the toolbox to open it in the editor.';
+        return 'Select a thought from the toolbox to open it for editing.';
       }
 
-      return 'Capture something new from the toolbox to begin.';
+      return 'Capture a thought from the toolbox to get started.';
     }
 
-    return 'Draft in markdown. Use the toolbox to switch context or capture quick ideas.';
+    return 'Write in Markdown. Use the toolbox to switch context or capture quick ideas.';
   }, [activeThought, collectionEntries.length, searchActive]);
 
   const activeCollectionSummary = React.useMemo(
@@ -661,14 +1053,21 @@ const App: React.FC = () => {
     [activeCollection, collections]
   );
 
+  const aiSummary = useAISummary({
+    id: activeThought?.thought.id,
+    content: activeThought?.thought.content,
+    enabled: aiSettings.enabled && aiStatus === 'ok',
+    mode: aiSettings.mode
+  });
+
   const collectionEmptyCopy = React.useMemo(() => {
     if (!searchActive) {
       switch (activeCollection) {
         case 'daily-review':
           return (
             <React.Fragment>
-              <span className="flow-list__empty-lead">Nothing in focus yet.</span>
-              <span className="flow-list__empty-hint">Capture with !focus from the toolbox to line up deep work.</span>
+              <span className="flow-list__empty-lead">No thoughts in focus yet.</span>
+              <span className="flow-list__empty-hint">Capture with !focus in the toolbox to line up deep work.</span>
               <div className="flow-list__empty-actions">
                 <button type="button" className="flow-list__empty-action" onClick={handleCreateThought}>
                   Capture a focus thought
@@ -683,10 +1082,10 @@ const App: React.FC = () => {
           return (
             <React.Fragment>
               <span className="flow-list__empty-lead">No projects yet.</span>
-              <span className="flow-list__empty-hint">Capture with @project or move work here from the palette.</span>
+              <span className="flow-list__empty-hint">Capture with @project or move work here from the command palette.</span>
               <div className="flow-list__empty-actions">
                 <button type="button" className="flow-list__empty-action" onClick={openPaletteFromCapture}>
-                  Browse suggestions
+                  Open command palette
                 </button>
               </div>
             </React.Fragment>
@@ -702,13 +1101,13 @@ const App: React.FC = () => {
           return (
             <React.Fragment>
               <span className="flow-list__empty-lead">Inbox is clear.</span>
-              <span className="flow-list__empty-hint">Capture something new or promote a project from the palette.</span>
+              <span className="flow-list__empty-hint">Capture something new or promote a project from the command palette.</span>
               <div className="flow-list__empty-actions">
                 <button type="button" className="flow-list__empty-action" onClick={handleCreateThought}>
                   Capture a thought
                 </button>
                 <button type="button" className="flow-list__empty-action" onClick={openPaletteFromCapture}>
-                  Browse suggestions
+                  Open command palette
                 </button>
               </div>
             </React.Fragment>
@@ -719,7 +1118,7 @@ const App: React.FC = () => {
     return (
       <React.Fragment>
         <span className="flow-list__empty-lead">No matching thoughts.</span>
-        <span className="flow-list__empty-hint">Clear the search filter to see everything in this collection.</span>
+        <span className="flow-list__empty-hint">Reset filters to view every thought in this collection.</span>
         <div className="flow-list__empty-actions">
           <button type="button" className="flow-list__empty-action" onClick={handleClearSearch}>
             Clear search
@@ -729,6 +1128,78 @@ const App: React.FC = () => {
     );
   }, [activeCollection, handleClearSearch, handleCreateThought, openPaletteFromCapture, searchActive]);
 
+
+  const captureToolboxContext = React.useMemo(() => {
+    return (
+      <div className="capture-shell__toolbox capture-shell__toolbox--command-center">
+        <div className="capture-shell__toolbox-section">
+          <FlowList
+            title={activeCollectionSummary?.label ?? 'Collection'}
+            description={activeCollectionSummary?.hint}
+            entries={collectionEntries}
+            emptyCopy={collectionEmptyCopy}
+            onSelect={(id) => {
+              selectThought(id);
+            }}
+            onAction={handleFlowAction}
+            activeId={activeThought?.thought.id}
+            showAdvanced={advancedUnlocked}
+            highlightId={recentlyMovedId ?? undefined}
+          />
+        </div>
+
+        <div className="capture-shell__toolbox-section capture-shell__toolbox-metrics">
+          <div className="toolbox-metric">
+            <span>Captured Today</span>
+            <strong>{metrics.capturedToday}</strong>
+          </div>
+          <div className="toolbox-metric">
+            <span>High Energy</span>
+            <strong>{metrics.highEnergyCount}</strong>
+          </div>
+        </div>
+
+        {activeThought ? (
+          <div className="capture-shell__toolbox-section capture-shell__toolbox-current">
+            <h3>Current Thought</h3>
+            <div className="toolbox-current__momentum">
+              <div className="toolbox-current__momentum-heading">
+                <span>Momentum</span>
+                <strong>{momentumLabel[activeThought.momentum]}</strong>
+              </div>
+              <div className="context-progress" role="img" aria-label={`Momentum at ${momentumProgress[activeThought.momentum]} percent`}>
+                <div className="context-progress__bar" style={{ width: `${momentumProgress[activeThought.momentum]}%` }} />
+              </div>
+              <span className="context-progress__meta">Energy: {energyLabel[activeThought.energy]}</span>
+              <span className="context-progress__meta">Last edited {formatRelativeUpdatedAt(activeThought.thought.updatedAt)}</span>
+              {activeThought.activityTrend ? (
+                <span className="context-progress__meta">Focus streak: {computeFocusStreak(activeThought.activityTrend)} day(s)</span>
+              ) : null}
+            </div>
+            {activeThought.thought.tags.length ? (
+              <div className="toolbox-current__tags">
+                {activeThought.thought.tags.map((tag) => (
+                  <span key={tag} className="context-tag">
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  }, [
+    activeCollectionSummary,
+    collectionEntries,
+    collectionEmptyCopy,
+    selectThought,
+    handleFlowAction,
+    activeThought,
+    advancedUnlocked,
+    recentlyMovedId,
+    metrics
+  ]);
 
   const handleUndo = React.useCallback(() => {
     if (!undoState) {
@@ -807,18 +1278,14 @@ const App: React.FC = () => {
             return 'Inbox';
         }
       })();
-      return `Captured “${title}” to ${destination}.`;
+      return `Captured "${title}" to ${destination}.`;
     }
 
-    return `${undoState.label} “${title}”.`;
+    return `${undoState.label} "${title}".`;
   }, [undoState]);
 
   return (
     <main className="capture-shell capture-shell--editor-only">
-      <span className="visually-hidden" aria-live="polite">
-        {recentlyMovedId ? 'Thought moved to Now.' : ''}
-      </span>
-
       <header className="capture-shell__header">
         <div className="capture-shell__header-leading">
           <div className="capture-shell__branding">
@@ -865,11 +1332,64 @@ const App: React.FC = () => {
             aria-describedby="workspace-search-hint"
             autoComplete="off"
           />
+          {query ? (
+            <button
+              type="button"
+              className="capture-shell__search-clear"
+              onClick={handleClearSearch}
+              title="Clear search"
+              aria-label="Clear search"
+              aria-controls="workspace-search"
+            >
+              <span aria-hidden="true">Clear</span>
+            </button>
+          ) : null}
           <span id="workspace-search-hint" className="capture-shell__search-hint">
-            {advancedUnlocked ? 'Press / to search • ⌘ + K for commands' : 'Press / to search'}
+            {advancedUnlocked ? 'Press / to focus search. Press ⌘ + K for commands.' : 'Press / to focus search.'}
           </span>
+          {aiSettings.enabled ? (
+            <div className="capture-shell__search-ai" aria-live="polite">
+              <span className="capture-shell__search-ai-label">AI</span>
+              {aiStatus === 'checking' ? (
+                <span className="capture-shell__search-ai-status">Checking availability…</span>
+              ) : aiStatus === 'unavailable' ? (
+                <span className="capture-shell__search-ai-status">
+                  Model unavailable{aiDetail ? ` – ${aiDetail}` : ''}
+                </span>
+              ) : aiSearch.status === 'loading' ? (
+                <span className="capture-shell__search-ai-status">Thinking…</span>
+              ) : aiSearch.status === 'error' ? (
+                <button type="button" className="capture-shell__search-ai-retry" onClick={aiSearch.refresh}>
+                  Retry AI search
+                </button>
+              ) : aiSearch.results.length ? (
+                <ul className="capture-shell__search-ai-results">
+                  {aiSearch.results.slice(0, 2).map((result, index) => (
+                    <li key={`${result.id ?? 'ai-result'}-${index}`}>
+                      <strong>{result.title}</strong>
+                      <span>{result.snippet}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span className="capture-shell__search-ai-status">No smart matches yet.</span>
+              )}
+            </div>
+          ) : null}
         </div>
       </header>
+
+      <EditorToolbar
+        navItems={navItems}
+        activeCollection={activeCollection}
+        onSelectCollection={setCollection}
+        onOpenPalette={openPalette}
+        onOpenCaptureCenter={openCaptureCenter}
+        onTogglePreview={handleTogglePreview}
+        previewMode={previewMode}
+        activeThoughtTitle={activeThought?.thought.title}
+        activeThoughtUpdatedAt={activeThought ? formatRelativeUpdatedAt(activeThought.thought.updatedAt) : undefined}
+      />
 
       <section className="capture-shell__editor-wrapper capture-shell__editor-wrapper--full">
         <div className="capture-shell__editor-scroll">
@@ -882,19 +1402,59 @@ const App: React.FC = () => {
               savingState={savingState}
               onChange={handleEditorChange}
               tagOptions={tags}
+              previewMode={previewMode}
             />
           ) : (
             <div className="capture-shell__empty-editor capture-shell__empty-editor--full">
-              <strong>You're prepped.</strong>
+              <strong>Ready to capture.</strong>
               <span>
                 {collectionEntries.length
-                  ? 'Select a thought from the toolbox to begin editing.'
-                  : 'Capture from the toolbox to get started.'}
+                  ? 'Choose a thought from the toolbox to start editing.'
+                  : 'Capture a thought from the toolbox to get started.'}
               </span>
             </div>
           )}
 
           <div className="capture-shell__microcopy">{editorMicrocopy}</div>
+
+          {aiSettings.enabled && activeThought ? (
+            <div className="capture-shell__ai-summary" aria-live="polite">
+              <div className="capture-shell__ai-summary-heading">
+                <span className="capture-shell__ai-summary-title">AI summary</span>
+                {aiDetail ? <span className="capture-shell__ai-summary-note">{aiDetail}</span> : null}
+                {aiSettings.enabled && aiStatus === 'ok' && aiSummary.status === 'error' ? (
+                  <button type="button" className="capture-shell__ai-summary-action" onClick={aiSummary.refresh}>
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+              {aiStatus === 'checking' ? (
+                <p className="capture-shell__ai-summary-status">Checking availability…</p>
+              ) : aiStatus === 'unavailable' ? (
+                <p className="capture-shell__ai-summary-status">Model unavailable. Start the local service to see summaries.</p>
+              ) : aiSummary.status === 'loading' ? (
+                <p className="capture-shell__ai-summary-status">Summarising note…</p>
+              ) : aiSummary.status === 'success' && aiSummary.data ? (
+                <div className="capture-shell__ai-summary-body">
+                  <p>{aiSummary.data.summary}</p>
+                  {aiSummary.data.highlights && aiSummary.data.highlights.length ? (
+                    <ul>
+                      {aiSummary.data.highlights.map((highlight, index) => (
+                        <li key={`highlight-${index}`}>{highlight}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="capture-shell__ai-summary-actions">
+                    <button type="button" onClick={aiSummary.refresh} className="capture-shell__ai-summary-action">
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="capture-shell__ai-summary-status">AI summary will appear after you edit this note.</p>
+              )}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -917,146 +1477,25 @@ const App: React.FC = () => {
         </aside>
       ) : null}
 
-      {toolbarExpanded ? (
-        <div className="capture-shell__toolbar-panel" role="region" aria-label="Toolbox">
-          <div className="capture-shell__toolbox">
-            {captureVisibility === 'hidden' ? (
-              <button type="button" className="capture-shell__toolbar-reveal" onClick={revealCapture}>
-                Show quick capture
-              </button>
-            ) : (
-              <CaptureBox
-                ref={captureRef}
-                onCapture={handleCapture}
-                suggestions={captureSuggestions}
-                onCommandPalette={openPaletteFromCapture}
-                placeholder={capturePlaceholder}
-                isCollapsed={captureVisibility === 'collapsed'}
-                onCollapseToggle={toggleCaptureCollapse}
-                onDismiss={dismissCapture}
-                showCommandShortcuts={showCommandShortcuts}
-              />
-            )}
-
-            <div className="capture-shell__toolbox-section">
-              <FlowList
-                title={activeCollectionSummary?.label ?? 'Collection'}
-                description={activeCollectionSummary?.hint}
-                entries={collectionEntries}
-                emptyCopy={collectionEmptyCopy}
-                onSelect={(id) => {
-                  selectThought(id);
-                }}
-                onAction={handleFlowAction}
-                activeId={activeThought?.thought.id}
-                showAdvanced={advancedUnlocked}
-                highlightId={recentlyMovedId ?? undefined}
-              />
-            </div>
-
-            <div className="capture-shell__toolbox-section capture-shell__toolbox-metrics">
-              <div className="toolbox-metric">
-                <span>Captured today</span>
-                <strong>{metrics.capturedToday}</strong>
-              </div>
-              <div className="toolbox-metric">
-                <span>High-energy</span>
-                <strong>{metrics.highEnergyCount}</strong>
-              </div>
-            </div>
-
-            {activeThought ? (
-              <div className="capture-shell__toolbox-section capture-shell__toolbox-current">
-                <h3>Current thought</h3>
-                <div className="toolbox-current__momentum">
-                  <div className="toolbox-current__momentum-heading">
-                    <span>Momentum</span>
-                    <strong>{momentumLabel[activeThought.momentum]}</strong>
-                  </div>
-                  <div
-                    className="context-progress"
-                    role="img"
-                    aria-label={`Momentum at ${momentumProgress[activeThought.momentum]} percent`}
-                  >
-                    <div className="context-progress__bar" style={{ width: `${momentumProgress[activeThought.momentum]}%` }} />
-                  </div>
-                  <span className="context-progress__meta">Energy: {energyLabel[activeThought.energy]}</span>
-                  <span className="context-progress__meta">Last edited {formatRelativeUpdatedAt(activeThought.thought.updatedAt)}</span>
-                  {activeThought.activityTrend ? (
-                    <span className="context-progress__meta">Focus streak: {computeFocusStreak(activeThought.activityTrend)} day(s)</span>
-                  ) : null}
-                </div>
-                {activeThought.thought.tags.length ? (
-                  <div className="toolbox-current__tags">
-                    {activeThought.thought.tags.map((tag) => (
-                      <span key={tag} className="context-tag">
-                        #{tag}
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      <nav
-        className={`capture-shell__bottom-nav${toolbarExpanded ? ' capture-shell__bottom-nav--expanded' : ' capture-shell__bottom-nav--collapsed'}`}
-        aria-label="Sections"
-      >
-        <button
-          type="button"
-          className="capture-shell__nav-toggle"
-          onClick={toggleToolbar}
-          aria-expanded={toolbarExpanded}
-          aria-label={toolbarExpanded ? 'Hide toolbox' : 'Open toolbox'}
-        >
-          <span className="capture-shell__nav-toggle-icon" aria-hidden="true">
-            {toolbarExpanded ? '×' : '+'}
-          </span>
-          <span className="capture-shell__nav-toggle-hint" aria-hidden="true">
-            ⌘ + Enter
-          </span>
-        </button>
-        <div
-          className={`capture-shell__nav-items${toolbarExpanded ? ' capture-shell__nav-items--visible' : ''}`}
-          aria-hidden={!toolbarExpanded}
-        >
-          {navItems.map((item) => {
-            const isActive = item.id === activeCollection;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={`capture-shell__nav-button${isActive ? ' capture-shell__nav-button--active' : ''}`}
-                onClick={() => {
-                  setCollection(item.id);
-                }}
-                aria-pressed={isActive}
-                aria-label={`${item.label}${item.count ? ` (${item.count} items)` : ''}`}
-                tabIndex={toolbarExpanded ? 0 : -1}
-              >
-                <span className="capture-shell__nav-label">{item.label}</span>
-                {item.count ? (
-                  <span className="capture-shell__nav-badge" aria-hidden="true">
-                    {item.count}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
-
       <CommandPalette
         open={paletteOpen}
-        query={paletteQuery}
+        mode={paletteMode}
+        captureDefaults={paletteCaptureDefaults ?? undefined}
+        query={paletteMode === 'capture' ? '' : paletteQuery}
         onQueryChange={handlePaletteQueryChange}
         palette={palette}
         highlightIndex={highlightIndex}
         onHover={handleSuggestionHover}
         onSelect={handleSuggestionSelect}
+        onCaptureSubmit={handlePaletteCaptureSubmit}
+        onCaptureCancel={handlePaletteCaptureCancel}
+        captureBoxConfig={{
+          suggestions: captureSuggestions,
+          placeholder: capturePlaceholder,
+          showCommandShortcuts,
+          aiOptions: captureAiOptions
+        }}
+        captureContext={captureToolboxContext}
         onClose={() => {
           closePalette();
           setPaletteQuery('');

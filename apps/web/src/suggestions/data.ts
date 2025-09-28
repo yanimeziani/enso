@@ -1,4 +1,4 @@
-import type { Thought } from '@thoughtz/core';
+import type { Thought } from '@enso/core';
 import type { CollectionId } from '../workspaceData';
 
 export type SuggestionIntent = 'capture' | 'review' | 'link' | 'revive';
@@ -12,6 +12,7 @@ export interface SuggestionNode {
   targetThoughtId?: Thought['id'];
   collection: CollectionId;
   action?: () => void;
+  tags?: string[];
 }
 
 export interface SuggestionGroup {

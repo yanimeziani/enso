@@ -31,7 +31,7 @@ export const NoteList: React.FC<NoteListProps> = ({ entries, activeId, onSelect 
     return (
       <div className="note-list__empty">
         <strong>No thoughts captured yet</strong>
-        <span>Start a new note to begin organising.</span>
+        <span>Capture a thought to begin organizing.</span>
       </div>
     );
   }
@@ -47,12 +47,14 @@ export const NoteList: React.FC<NoteListProps> = ({ entries, activeId, onSelect 
             className={`note-list__item${isActive ? ' note-list__item--active' : ''}`}
             onClick={() => onSelect(entry.thought.id)}
             aria-selected={isActive}
+            aria-current={isActive ? 'true' : undefined}
+            title={entry.thought.title ? `Open ${entry.thought.title}` : 'Open untitled thought'}
           >
             <div className="note-list__header">
               <span className="note-list__title">{entry.thought.title || 'Untitled thought'}</span>
               <span className="note-list__time">{formatRelativeTime(entry.thought.updatedAt)}</span>
             </div>
-            <p className="note-list__preview">{entry.thought.content || 'Draft note'}</p>
+            <p className="note-list__preview">{entry.thought.content || 'Draft thought'}</p>
             <div className="note-list__tags">
               {entry.thought.tags.slice(0, 3).map((tag) => (
                 <span key={tag} className="note-list__tag">

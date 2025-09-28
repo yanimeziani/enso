@@ -1,8 +1,11 @@
 import React from 'react';
+import type { AISuggestion, AIClientMode } from '@enso/core';
+import type { CollectionId } from '../workspaceData';
+import { useAISuggestions } from '../hooks/useAISuggestions';
 
 import './CaptureBox.css';
 
-type CaptureSuggestions = {
+export type CaptureSuggestions = {
   tagSuggestions: string[];
   focusHint?: string;
   showHints: boolean;
@@ -10,8 +13,15 @@ type CaptureSuggestions = {
   microcopyTone: 'intro' | 'reinforce' | 'fade' | 'quiet';
 };
 
+type CaptureBoxAIOptions = {
+  enabled: boolean;
+  mode: AIClientMode;
+  status: 'disabled' | 'checking' | 'ok' | 'unavailable';
+  detail?: string | null;
+};
+
 type CaptureBoxProps = {
-  onCapture: (payload: { text: string; tags: string[]; focus: boolean; project?: string }) => void;
+  onCapture: (payload: { text: string; tags: string[]; focus: boolean; project?: string; collectionOverride?: CollectionId }) => void;
   suggestions: CaptureSuggestions;
   onCommandPalette: () => void;
   placeholder: string;
@@ -20,6 +30,14 @@ type CaptureBoxProps = {
   onDismiss: () => void;
   showCommandShortcuts: boolean;
   onCaptured?: () => void;
+  showHeader?: boolean;
+  headerLabel?: string;
+  headerDescription?: string;
+  showCommandShortcutButton?: boolean;
+  showViewControls?: boolean;
+  className?: string;
+  initialValue?: string;
+  aiOptions?: CaptureBoxAIOptions;
 };
 
 export type CaptureBoxHandle = {
@@ -77,11 +95,19 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
     onCollapseToggle,
     onDismiss,
     showCommandShortcuts,
-    onCaptured
+    onCaptured,
+    showHeader = true,
+    headerLabel,
+    headerDescription,
+    showCommandShortcutButton = true,
+    showViewControls = true,
+    className,
+    initialValue,
+    aiOptions
   },
   forwardedRef
 ) => {
-  const [value, setValue] = React.useState('');
+  const [value, setValue] = React.useState(() => initialValue ?? '');
   const [lastCaptured, setLastCaptured] = React.useState<string>('');
   const [flashCapture, setFlashCapture] = React.useState(false);
   const [isListening, setIsListening] = React.useState(false);
@@ -90,6 +116,14 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
   const flashTimeoutRef = React.useRef<number | null>(null);
   const [voiceError, setVoiceError] = React.useState<string | null>(null);
   const voiceErrorTimeoutRef = React.useRef<number | null>(null);
+  const [dismissedAiSuggestionIds, setDismissedAiSuggestionIds] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    if (initialValue === undefined) {
+      return;
+    }
+    setValue(initialValue);
+  }, [initialValue]);
 
   React.useImperativeHandle(forwardedRef, () => ({
     focus: () => textareaRef.current?.focus()
@@ -162,6 +196,44 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
 
   const tokens = React.useMemo(() => parseTokens(value), [value]);
 
+  const aiEnabled = Boolean(aiOptions && aiOptions.enabled && aiOptions.status === 'ok');
+
+  const aiPayload = React.useMemo(() => {
+    if (!aiEnabled) {
+      return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    return {
+      content: trimmed,
+      tags: tokens.tags,
+      mode: aiOptions?.mode,
+      context: {
+        project: tokens.project,
+        focus: tokens.focus
+      }
+    };
+  }, [aiEnabled, value, tokens, aiOptions]);
+
+  const aiSuggestionsState = useAISuggestions(aiPayload, {
+    enabled: aiEnabled,
+    debounceMs: 500
+  });
+
+  React.useEffect(() => {
+    if (!value.trim()) {
+      setDismissedAiSuggestionIds([]);
+    }
+  }, [value]);
+
+  React.useEffect(() => {
+    if (!aiEnabled) {
+      setDismissedAiSuggestionIds([]);
+    }
+  }, [aiEnabled]);
+
   const insertToken = (token: string) => {
     const textarea = textareaRef.current;
     if (!textarea) {
@@ -193,6 +265,50 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition);
       });
     }
+  };
+
+  const filteredAISuggestions = React.useMemo(() => {
+    if (!aiSuggestionsState.suggestions.length) {
+      return [] as AISuggestion[];
+    }
+    const dismissed = new Set(dismissedAiSuggestionIds);
+    return aiSuggestionsState.suggestions.filter((suggestion) => {
+      const key = suggestion.id ?? suggestion.label;
+      if (dismissed.has(key)) {
+        return false;
+      }
+      if (suggestion.type === 'tag') {
+        const normalized = (suggestion.value ?? suggestion.label).replace(/^#/, '').toLowerCase();
+        return !tokens.tags.includes(normalized);
+      }
+      if (suggestion.type === 'project' && tokens.project) {
+        return false;
+      }
+      if (suggestion.type === 'focus' && tokens.focus) {
+        return false;
+      }
+      return true;
+    });
+  }, [aiSuggestionsState.suggestions, dismissedAiSuggestionIds, tokens]);
+
+  const applyAISuggestion = (suggestion: AISuggestion) => {
+    const key = suggestion.id ?? suggestion.label;
+    if (suggestion.type === 'focus') {
+      insertToken('!focus');
+    } else if (suggestion.type === 'project' || suggestion.type === 'tag') {
+      insertToken(suggestion.value ?? suggestion.label);
+    } else if (suggestion.value) {
+      insertToken(suggestion.value);
+    }
+    if (textareaRef.current) {
+      textareaRef.current.focus({ preventScroll: true });
+    }
+    setDismissedAiSuggestionIds((current) => (current.includes(key) ? current : [...current, key]));
+  };
+
+  const dismissAISuggestion = (suggestion: AISuggestion) => {
+    const key = suggestion.id ?? suggestion.label;
+    setDismissedAiSuggestionIds((current) => (current.includes(key) ? current : [...current, key]));
   };
 
   const handleSubmit = () => {
@@ -242,7 +358,7 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
       recognitionRef.current.start();
       setIsListening(true);
       setVoiceError(null);
-    } catch (error) {
+    } catch {
       setIsListening(false);
       setVoiceError('Voice capture unavailable right now. Check your microphone and try again.');
     }
@@ -336,35 +452,58 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
     return list.slice(0, 4);
   }, [showCommandShortcuts, suggestions.tagSuggestions, tokens.focus, tokens.project, tokens.tags]);
 
-  return (
-    <section
-      className={`capture-box${flashCapture ? ' capture-box--flash' : ''}${isCollapsed ? ' capture-box--collapsed' : ''}`}
-      aria-label="Quick capture"
-      aria-expanded={!isCollapsed}
-    >
-      <div className="capture-box__header">
-        <div className="capture-box__heading">
-          <span className="capture-box__label">Quick capture</span>
-          <span className="capture-box__description">
-            {lastCaptured ? `Last capture: “${lastCaptured}”` : 'One box. Drop the thought and route it later.'}
-          </span>
-        </div>
-        <div className="capture-box__actions">
-          <button type="button" className="capture-box__command" onClick={onCommandPalette}>
-            ⌘ + K
-          </button>
-          <div className="capture-box__view-controls">
-            <button type="button" onClick={onCollapseToggle} className="capture-box__view-control" aria-pressed={isCollapsed}>
-              {isCollapsed ? 'Expand' : 'Collapse'}
-            </button>
-            <button type="button" onClick={onDismiss} className="capture-box__view-control capture-box__view-control--dismiss">
-              Hide
-            </button>
-          </div>
-        </div>
-      </div>
+  const composedClassName = React.useMemo(() => {
+    const classes = ['capture-box'];
+    if (flashCapture) {
+      classes.push('capture-box--flash');
+    }
+    if (isCollapsed && showHeader) {
+      classes.push('capture-box--collapsed');
+    }
+    if (className) {
+      classes.push(className);
+    }
+    return classes.join(' ');
+  }, [className, flashCapture, isCollapsed, showHeader]);
 
-      {isCollapsed ? (
+  const headingLabel = headerLabel ?? 'Quick capture';
+  const headingDescription = headerDescription
+    ? headerDescription
+    : lastCaptured
+    ? `Last capture: “${lastCaptured}”`
+    : 'One box. Drop the thought and route it later.';
+
+  return (
+    <section className={composedClassName} aria-label="Quick capture" aria-expanded={showHeader ? !isCollapsed : true}>
+      {showHeader ? (
+        <div className="capture-box__header">
+          <div className="capture-box__heading">
+            <span className="capture-box__label">{headingLabel}</span>
+            <span className="capture-box__description">{headingDescription}</span>
+          </div>
+          {(showCommandShortcutButton || showViewControls) && (
+            <div className="capture-box__actions">
+              {showCommandShortcutButton ? (
+                <button type="button" className="capture-box__command" onClick={onCommandPalette}>
+                  ⌘ + K
+                </button>
+              ) : null}
+              {showViewControls ? (
+                <div className="capture-box__view-controls">
+                  <button type="button" onClick={onCollapseToggle} className="capture-box__view-control" aria-pressed={isCollapsed}>
+                    {isCollapsed ? 'Expand' : 'Collapse'}
+                  </button>
+                  <button type="button" onClick={onDismiss} className="capture-box__view-control capture-box__view-control--dismiss">
+                    Hide
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {showHeader && isCollapsed ? (
         <div className="capture-box__collapsed">
           <span className="capture-box__collapsed-text">
             {lastCaptured ? `Last capture: “${lastCaptured}”` : 'Quick capture is tucked away.'}
@@ -384,6 +523,58 @@ const CaptureBoxInner: React.ForwardRefRenderFunction<CaptureBoxHandle, CaptureB
             placeholder={placeholder}
             rows={5}
           />
+
+          {aiOptions ? (
+            <div className="capture-box__ai" aria-live="polite">
+              <div className="capture-box__ai-header">
+                <span className="capture-box__ai-label">AI suggests</span>
+                {aiOptions.detail ? <span className="capture-box__ai-detail">{aiOptions.detail}</span> : null}
+                {aiOptions.status === 'ok' && aiSuggestionsState.status === 'error' ? (
+                  <button type="button" className="capture-box__ai-action" onClick={aiSuggestionsState.refresh}>
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+              {aiOptions.status === 'disabled' ? (
+                <p className="capture-box__ai-message">Enable AI in settings to surface smart hints.</p>
+              ) : aiOptions.status === 'checking' ? (
+                <p className="capture-box__ai-message">Checking availability…</p>
+              ) : aiOptions.status === 'unavailable' ? (
+                <p className="capture-box__ai-message">Model unavailable. Start the local service to resume suggestions.</p>
+              ) : aiSuggestionsState.status === 'loading' ? (
+                <p className="capture-box__ai-message">Thinking…</p>
+              ) : aiSuggestionsState.status === 'error' ? (
+                <p className="capture-box__ai-message">AI couldn’t respond. Try again soon.</p>
+              ) : filteredAISuggestions.length ? (
+                <div className="capture-box__ai-chips">
+                  {filteredAISuggestions.map((suggestion) => {
+                    const key = suggestion.id ?? suggestion.label;
+                    return (
+                      <div key={key} className="capture-box__ai-chip">
+                        <button
+                          type="button"
+                          className="capture-box__ai-chip-apply"
+                          onClick={() => applyAISuggestion(suggestion)}
+                        >
+                          {suggestion.label}
+                        </button>
+                        <button
+                          type="button"
+                          className="capture-box__ai-chip-dismiss"
+                          onClick={() => dismissAISuggestion(suggestion)}
+                          aria-label={`Dismiss suggestion ${suggestion.label}`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="capture-box__ai-message">No suggestions yet.</p>
+              )}
+            </div>
+          ) : null}
 
           {commandShortcuts.length ? (
             <div className="capture-box__shortcuts" aria-label="Quick commands">

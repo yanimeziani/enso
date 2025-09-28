@@ -1,5 +1,5 @@
 {
-  "name": "@thoughtz/web",
+  "name": "@enso/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,19 +12,24 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@thoughtz/core": "workspace:*",
-    "@thoughtz/ui": "workspace:*",
+    "@enso/core": "workspace:*",
+    "@enso/ui": "workspace:*",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-markdown": "^9.0.1",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.0",
+    "unist-util-visit": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/react": "^18.2.39",
     "@types/react-dom": "^18.2.17",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
+    "@types/mdast": "^4.0.3",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
     "@vitejs/plugin-react": "^4.2.1",
-    "eslint": "^8.57.0",
+    "eslint": "^9.0.0",
     "typescript": "^5.4.5",
     "vite": "^5.2.0",
     "vitest": "^1.5.2"

@@ -11,6 +11,14 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitOverride": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@enso/core": ["packages/core/src"],
+      "@enso/core/*": ["packages/core/src/*"],
+      "@enso/ui": ["packages/ui/src"],
+      "@enso/ui/*": ["packages/ui/src/*"],
+      "@enso/lynx": ["packages/lynx/src"],
+      "@enso/lynx/*": ["packages/lynx/src/*"]
+    }
   }
 }

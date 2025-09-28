@@ -4,7 +4,7 @@
 - Treat `PRD.md` as the live scope reference; align all new modules with its milestones.
 - Target layout: `apps/mobile`, `apps/web`, `packages/core`, `packages/ui`, `packages/lynx`, and `docs/`; keep assets inside each app’s `assets/` folder.
 - Keep `packages/core` UI-free, publish shared primitives from `packages/ui`, and let `packages/lynx` encapsulate the Lynx/React bridge so platform hosts stay thin.
-- The committed Rspeedy scaffold resides in `apps/mobile/thoughtz-lynx`; integrate platform-specific views there.
+- The committed Rspeedy scaffold resides in `apps/mobile/enso-lynx`; integrate platform-specific views there.
 
 ## Build, Test, and Development Commands
 - Run `pnpm install` once to hydrate workspace dependencies.
@@ -19,7 +19,7 @@
 
 ## Testing Guidelines
 - Standard stack: Vitest with React Testing Library co-located as `*.test.ts[x]` beside source files.
-- House Lynx runtime tests in `packages/lynx` and `apps/mobile/thoughtz-lynx` (when applicable), web UI specs under `apps/web/src/__tests__`, and mobile fallback flows under `apps/mobile/src/__tests__`.
+- House Lynx runtime tests in `packages/lynx` and `apps/mobile/enso-lynx` (when applicable), web UI specs under `apps/web/src/__tests__`, and mobile fallback flows under `apps/mobile/src/__tests__`.
 - Target ≥80% coverage, emphasizing offline sync, linking behaviors, and runtime bridging; reserve snapshots for design-system components only.
 
 ## Commit & Pull Request Guidelines

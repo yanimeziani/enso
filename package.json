@@ -1,16 +1,21 @@
 {
-  "name": "thoughtz-monorepo",
+  "name": "enso-monorepo",
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@8.15.4",
   "scripts": {
-    "dev:web": "pnpm --filter @thoughtz/web dev",
-    "dev:mobile": "pnpm --filter @thoughtz/mobile dev",
+    "dev": "./scripts/dev.sh",
+    "dev:web": "pnpm --filter @enso/web dev",
+    "dev:mobile": "pnpm --filter @enso/mobile dev",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   },
   "dependencies": {
     "pnpm": "^10.17.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.0.0"
   }
 }

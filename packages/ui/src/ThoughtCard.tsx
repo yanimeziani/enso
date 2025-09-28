@@ -1,4 +1,4 @@
-import type { Thought } from '@thoughtz/core';
+import type { Thought } from '@enso/core';
 import React from 'react';
 
 import './ThoughtCard.css';

@@ -1,0 +1,314 @@
+.toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--tz-color-surface-strong);
+  border: 1px solid var(--tz-color-border);
+  border-radius: var(--tz-radius-md);
+  box-shadow: var(--tz-shadow-soft);
+  width: min(960px, 100%);
+  margin: 0 auto 1rem;
+  position: sticky;
+  top: 0.75rem;
+  z-index: 8;
+}
+
+.toolbar__collections {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.toolbar__collection-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(97, 135, 200, 0.08);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.toolbar__collection-button--active {
+  background: rgba(97, 135, 200, 0.18);
+  border-color: rgba(97, 135, 200, 0.45);
+  box-shadow: 0 0 0 2px rgba(97, 135, 200, 0.18);
+}
+
+.toolbar__collection-button:focus-visible,
+.toolbar__collection-button:hover {
+  outline: none;
+  background: rgba(97, 135, 200, 0.22);
+  border-color: rgba(97, 135, 200, 0.55);
+  transform: translateY(-1px);
+}
+
+.toolbar__collection-count {
+  font-size: 0.75rem;
+  color: var(--tz-color-text-muted);
+}
+
+.toolbar__context {
+  min-width: 0;
+}
+
+.toolbar__current {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 100%;
+}
+
+.toolbar__current-title {
+  font-size: 0.95rem;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar__current-meta {
+  font-size: 0.75rem;
+  color: var(--tz-color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.toolbar__button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+  background: rgba(97, 135, 200, 0.08);
+  color: var(--tz-color-text);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.toolbar__button::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at center, rgba(97, 135, 200, 0.35) 0%, rgba(97, 135, 200, 0) 70%);
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+
+.toolbar__button svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.toolbar__button:hover,
+.toolbar__button:focus-visible {
+  outline: none;
+  background: rgba(97, 135, 200, 0.15);
+  border-color: rgba(97, 135, 200, 0.45);
+  transform: translateY(-1px);
+}
+
+.toolbar__button:hover::after,
+.toolbar__button:focus-visible::after {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.toolbar__button--active {
+  background: rgba(97, 135, 200, 0.22);
+  border-color: rgba(97, 135, 200, 0.65);
+  box-shadow: 0 0 0 2px rgba(97, 135, 200, 0.18);
+}
+
+.toolbar__button:active {
+  transform: translateY(0);
+}
+
+.toolbar__hint {
+  position: absolute;
+  bottom: -1.05rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  color: var(--tz-color-text-muted);
+  pointer-events: none;
+}
+
+.toolbar__help {
+  position: relative;
+}
+
+.toolbar__help--open .toolbar__button {
+  background: rgba(97, 135, 200, 0.2);
+  border-color: rgba(97, 135, 200, 0.5);
+}
+
+.toolbar__help-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  width: min(280px, calc(100vw - 2rem));
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  background: var(--tz-color-surface-strong);
+  border-radius: var(--tz-radius-md);
+  border: 1px solid var(--tz-color-border);
+  box-shadow: var(--tz-shadow-elevated);
+  animation: toolbar-menu-fade 140ms ease;
+  z-index: 12;
+}
+
+.toolbar__help-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.toolbar__help-section strong {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--tz-color-text-muted);
+}
+
+.toolbar__help-section ul {
+  margin: 0;
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--tz-color-text);
+}
+
+.toolbar__help-section li {
+  list-style: disc;
+}
+
+.toolbar__help-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(97, 135, 200, 0.12);
+  border: 1px solid rgba(97, 135, 200, 0.3);
+  font-family: var(--tz-font-mono);
+  font-size: 0.8rem;
+  color: var(--tz-color-accent-strong);
+}
+
+@media (max-width: 840px) {
+  .toolbar {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .toolbar__collections {
+    justify-content: flex-start;
+  }
+
+  .toolbar__context {
+    order: 3;
+  }
+
+  .toolbar__actions {
+    order: 2;
+    justify-content: flex-end;
+  }
+
+  .toolbar__hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolbar__button,
+  .toolbar__button::after {
+    transition: background 160ms ease, border-color 160ms ease;
+    transform: none !important;
+  }
+
+  .toolbar__button:hover,
+  .toolbar__button:focus-visible,
+  .toolbar__button:hover::after,
+  .toolbar__button:focus-visible::after {
+    transform: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .toolbar {
+    background: rgba(22, 29, 41, 0.92);
+    border-color: rgba(86, 115, 175, 0.4);
+  }
+
+  .toolbar__collection-button {
+    background: rgba(160, 255, 230, 0.12);
+    color: var(--tz-color-text);
+  }
+
+  .toolbar__collection-button--active {
+    background: rgba(160, 255, 230, 0.2);
+    border-color: rgba(160, 255, 230, 0.45);
+  }
+
+  .toolbar__button {
+    background: rgba(160, 255, 230, 0.12);
+  }
+
+  .toolbar__button:hover,
+  .toolbar__button:focus-visible {
+    background: rgba(160, 255, 230, 0.2);
+    border-color: rgba(160, 255, 230, 0.45);
+  }
+
+  .toolbar__button--active {
+    background: rgba(160, 255, 230, 0.28);
+    border-color: rgba(160, 255, 230, 0.6);
+    box-shadow: 0 0 0 2px rgba(160, 255, 230, 0.18);
+  }
+
+  .toolbar__help-panel {
+    background: rgba(22, 29, 41, 0.98);
+    border-color: rgba(86, 115, 175, 0.35);
+  }
+
+  .toolbar__help-token {
+    background: rgba(160, 255, 230, 0.12);
+    border-color: rgba(160, 255, 230, 0.35);
+    color: var(--tz-color-text);
+  }
+}
+
+@keyframes toolbar-menu-fade {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

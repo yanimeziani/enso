@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
-import { matchesQuery, normalizeThought } from '@thoughtz/core';
-import type { Thought } from '@thoughtz/core';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { matchesQuery, normalizeThought, collectionMeta } from '@enso/core';
+import type { Thought } from '@enso/core';
 import type { CollectionId, WorkspaceEntry, WorkspaceStatus } from '../workspaceData';
 
 export interface WorkspaceMetrics {
@@ -27,7 +27,7 @@ interface WorkspaceState {
   activeThought: WorkspaceEntry | null;
   selectThought: (id: Thought['id']) => void;
   metrics: WorkspaceMetrics;
-  updateThought: (id: Thought['id'], patch: { title?: string; content?: string; tags?: string[] }) => void;
+  updateThought: (id: Thought['id'], patch: { title?: string; content?: string; tags?: string[] }) => WorkspaceEntry | null;
   createThought: (input: {
     content: string;
     tags: string[];
@@ -41,26 +41,8 @@ interface WorkspaceState {
   removeThought: (id: Thought['id']) => WorkspaceEntry | null;
   nowEntries: WorkspaceEntry[];
   inboxEntries: WorkspaceEntry[];
+  hydrate: (entries: WorkspaceEntry[]) => void;
 }
-
-const collectionMeta: Record<CollectionId, { label: string; hint: string }> = {
-  inbox: {
-    label: 'Inbox',
-    hint: 'Fresh captures waiting for triage'
-  },
-  'daily-review': {
-    label: 'Daily Review',
-    hint: 'Focus blocks for today’s loop'
-  },
-  projects: {
-    label: 'Projects',
-    hint: 'In-flight initiatives and research'
-  },
-  archive: {
-    label: 'Archive',
-    hint: 'Completed loops and references'
-  }
-};
 
 const cloneEntry = (entry: WorkspaceEntry): WorkspaceEntry => ({
   ...entry,
@@ -81,6 +63,15 @@ const isToday = (iso: string) => {
 
 export const useWorkspace = (entries: WorkspaceEntry[]): WorkspaceState => {
   const [entriesState, setEntriesState] = useState<WorkspaceEntry[]>(() => entries);
+  const lastHydratedRef = useRef(entries);
+
+  useEffect(() => {
+    if (lastHydratedRef.current === entries) {
+      return;
+    }
+    lastHydratedRef.current = entries;
+    setEntriesState(entries);
+  }, [entries]);
   const [activeCollection, setActiveCollection] = useState<CollectionId>('daily-review');
   const [query, setQuery] = useState('');
   const [activeThoughtId, setActiveThoughtId] = useState<string>('');
@@ -154,6 +145,8 @@ export const useWorkspace = (entries: WorkspaceEntry[]): WorkspaceState => {
 
   const updateThought = useCallback(
     (id: Thought['id'], patch: { title?: string; content?: string; tags?: string[] }) => {
+      let updatedEntry: WorkspaceEntry | null = null;
+
       setEntriesState((prev) =>
         prev.map((entry) => {
           if (entry.thought.id !== id) {
@@ -166,13 +159,18 @@ export const useWorkspace = (entries: WorkspaceEntry[]): WorkspaceState => {
             updatedAt: new Date().toISOString()
           };
 
-          return {
+          const nextEntry: WorkspaceEntry = {
             ...entry,
             thought: nextThought,
             subtitle: `${collectionMeta[entry.collection].label} • just now`
           };
+
+          updatedEntry = cloneEntry(nextEntry);
+          return nextEntry;
         })
       );
+
+      return updatedEntry;
     },
     []
   );
@@ -235,27 +233,28 @@ export const useWorkspace = (entries: WorkspaceEntry[]): WorkspaceState => {
     );
   }, []);
 
+  const hydrateEntries = useCallback((nextEntries: WorkspaceEntry[]) => {
+    lastHydratedRef.current = nextEntries;
+    setEntriesState(nextEntries);
+  }, []);
+
   const removeThought = useCallback(
     (id: Thought['id']) => {
-      let removed: WorkspaceEntry | null = null;
-      setEntriesState((prev) => {
-        const next = prev.filter((entry) => {
-          if (entry.thought.id === id) {
-            removed = entry;
-            return false;
-          }
-          return true;
-        });
-        return next;
-      });
+      const index = entriesState.findIndex((entry) => entry.thought.id === id);
+      if (index === -1) {
+        return null;
+      }
 
-      if (removed && removed.thought.id === activeThoughtId) {
+      const removed = entriesState[index];
+      setEntriesState((prev) => prev.filter((entry) => entry.thought.id !== id));
+
+      if (removed.thought.id === activeThoughtId) {
         setActiveThoughtId('');
       }
 
-      return removed ? cloneEntry(removed) : null;
+      return cloneEntry(removed);
     },
-    [activeThoughtId]
+    [activeThoughtId, entriesState]
   );
 
   return {
@@ -276,6 +275,7 @@ export const useWorkspace = (entries: WorkspaceEntry[]): WorkspaceState => {
     replaceEntry,
     removeThought,
     nowEntries,
-    inboxEntries
+    inboxEntries,
+    hydrate: hydrateEntries
   };
 };

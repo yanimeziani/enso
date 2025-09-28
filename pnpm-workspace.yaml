@@ -1,4 +1,4 @@
 packages:
   - "apps/*"
-  - "apps/mobile/thoughtz-lynx"
+  - "apps/mobile/enso-lynx"
   - "packages/*"

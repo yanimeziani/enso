@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Thought } from '@thoughtz/core';
+import type { Thought } from '@enso/core';
 import type { CollectionId } from '../workspaceData';
 import { suggestionSeed } from './data';
 import type { SuggestionPalette } from './data';
@@ -70,11 +70,15 @@ export const useSuggestionPalette = ({ query, activeCollection, activeThoughtId,
         intent: suggestion.intent,
         snippet: suggestion.snippet,
         targetThoughtId: suggestion.targetThoughtId,
-        collection: suggestion.collection
+        collection: suggestion.collection,
+        tags: suggestion.tags
       }));
+
+    const spotlightIds = new Set(spotlights.map((item) => item.id));
 
     const contextCandidates = scored
       .filter(({ suggestion }) => suggestion.collection === activeCollection && suggestion.targetThoughtId !== activeThoughtId)
+      .filter(({ suggestion }) => !spotlightIds.has(suggestion.id))
       .slice(0, MAX_CONTEXT_NODES)
       .map(({ suggestion }) => ({
         id: suggestion.id,
@@ -83,7 +87,8 @@ export const useSuggestionPalette = ({ query, activeCollection, activeThoughtId,
         intent: suggestion.intent,
         snippet: suggestion.snippet,
         targetThoughtId: suggestion.targetThoughtId,
-        collection: suggestion.collection
+        collection: suggestion.collection,
+        tags: suggestion.tags
       }));
 
     return {

@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createLynxApp } from '@thoughtz/lynx';
+import { createLynxApp } from '@enso/lynx';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ThoughtzMobileApp } from '../src/App';
+import { EnsoMobileApp } from '../src/App';
 
-const scaffoldDir = resolve(process.cwd(), 'thoughtz-lynx');
+const scaffoldDir = resolve(process.cwd(), 'enso-lynx');
 const rspeedyBin = resolve(scaffoldDir, 'node_modules/.bin/rspeedy');
 const rspeedyBinWin = `${rspeedyBin}.cmd`;
 
@@ -23,7 +23,7 @@ const ensureDependencies = async () => {
     return;
   }
 
-  console.log('[Lynx] Installing dependencies in apps/mobile/thoughtz-lynx...');
+  console.log('[Lynx] Installing dependencies in apps/mobile/enso-lynx...');
 
   await new Promise<void>((resolvePromise, rejectPromise) => {
     const installProcess = runCommand('pnpm', ['install']);
@@ -66,8 +66,8 @@ if (existsSync(resolve(scaffoldDir, 'package.json'))) {
   });
 } else {
   const app = createLynxApp({
-    name: 'ThoughtzMobile',
-    component: ThoughtzMobileApp
+    name: 'EnsoMobile',
+    component: EnsoMobileApp
   });
 
   app.start({
@@ -79,5 +79,5 @@ if (existsSync(resolve(scaffoldDir, 'package.json'))) {
   });
 
   console.log('\nLynx dev bootstrap executed.');
-  console.log('Scaffold the native host with pnpm create rspeedy -- --dir thoughtz-lynx to enable the full bundler experience.');
+  console.log('Scaffold the native host with pnpm create rspeedy -- --dir enso-lynx to enable the full bundler experience.');
 }

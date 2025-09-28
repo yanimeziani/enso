@@ -65,51 +65,60 @@ export const FlowList: React.FC<FlowListProps> = ({
   isDropTarget = false,
   onSwipeAction,
   highlightId
-}) => (
-  <section
-    className={`flow-list${droppable ? ' flow-list--droppable' : ''}${isDropTarget ? ' flow-list--droppable-active' : ''}`}
-    onDragOver={(event) => {
-      if (!droppable) {
-        return;
-      }
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-    }}
-    onDragEnter={droppable ? () => onDragEnterList?.() : undefined}
-    onDragLeave={droppable ? () => onDragLeaveList?.() : undefined}
-    onDrop={(event) => {
-      if (!droppable) {
-        return;
-      }
-      event.preventDefault();
-      const droppedId = event.dataTransfer.getData('text/plain');
-      onDrop?.(droppedId || null);
-    }}
-  >
-    <header className="flow-list__header">
-      <div className="flow-list__heading">
-        <h2>{title}</h2>
-        <span className="flow-list__count">
-          {entries.length ? `${entries.length} ${entries.length === 1 ? 'item' : 'items'}` : 'Empty'}
-        </span>
-      </div>
-      {description ? <span className="flow-list__description">{description}</span> : null}
-    </header>
+}) => {
+  const headingId = React.useId();
+  const descriptionId = description ? `${headingId}-description` : undefined;
+  const countLabel = `${entries.length} ${entries.length === 1 ? 'item' : 'items'}`;
 
-    {entries.length === 0 ? (
-      <div className="flow-list__empty">
-        <div className="flow-list__empty-content">{emptyCopy}</div>
-      </div>
-    ) : (
-      <ul className="flow-list__items">
-        {entries.map((entry) => {
-          const isActive = entry.thought.id === activeId;
-          const isRecent = highlightId === entry.thought.id;
-          const snippet = entry.thought.content.trim() || 'Draft';
-          return (
-            <li
-              key={entry.thought.id}
-              className={`flow-list__item${isActive ? ' flow-list__item--active' : ''}${isRecent ? ' flow-list__item--recent' : ''}`}
+  return (
+    <section
+      className={`flow-list${droppable ? ' flow-list--droppable' : ''}${isDropTarget ? ' flow-list--droppable-active' : ''}`}
+      aria-labelledby={headingId}
+      aria-describedby={descriptionId}
+      onDragOver={(event) => {
+        if (!droppable) {
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+      }}
+      onDragEnter={droppable ? () => onDragEnterList?.() : undefined}
+      onDragLeave={droppable ? () => onDragLeaveList?.() : undefined}
+      onDrop={(event) => {
+        if (!droppable) {
+          return;
+        }
+        event.preventDefault();
+        const droppedId = event.dataTransfer.getData('text/plain');
+        onDrop?.(droppedId || null);
+      }}
+    >
+      <header className="flow-list__header">
+        <div className="flow-list__heading">
+          <h2 id={headingId}>{title}</h2>
+          <span className="flow-list__count">{countLabel}</span>
+        </div>
+        {description ? (
+          <span id={descriptionId} className="flow-list__description">
+            {description}
+          </span>
+        ) : null}
+      </header>
+
+      {entries.length === 0 ? (
+        <div className="flow-list__empty">
+          <div className="flow-list__empty-content">{emptyCopy}</div>
+        </div>
+      ) : (
+        <ul className="flow-list__items" aria-label={`${title} items`}>
+          {entries.map((entry) => {
+            const isActive = entry.thought.id === activeId;
+            const isRecent = highlightId === entry.thought.id;
+            const snippet = entry.thought.content.trim() || 'Draft';
+            return (
+              <li
+                key={entry.thought.id}
+                className={`flow-list__item${isActive ? ' flow-list__item--active' : ''}${isRecent ? ' flow-list__item--recent' : ''}`}
               draggable={enableDrag}
               onDragStart={(event) => {
                 if (!enableDrag) {
@@ -165,7 +174,13 @@ export const FlowList: React.FC<FlowListProps> = ({
                 }
               }}
             >
-              <button type="button" className="flow-list__content" onClick={() => onSelect(entry.thought.id)}>
+              <button
+                type="button"
+                className="flow-list__content"
+                onClick={() => onSelect(entry.thought.id)}
+                aria-current={isActive ? 'true' : undefined}
+                title={entry.thought.title ? `Open ${entry.thought.title}` : 'Open untitled thought'}
+              >
                 <span className="flow-list__title">{entry.thought.title || 'Untitled thought'}</span>
                 <span className="flow-list__snippet">{snippet}</span>
                 <div className="flow-list__meta">
@@ -174,22 +189,32 @@ export const FlowList: React.FC<FlowListProps> = ({
                 </div>
               </button>
               {showAdvanced ? (
-                <div className="flow-list__actions">
-                  <button className="flow-list__action flow-list__action--done" type="button" onClick={() => onAction(entry.thought.id, 'done')}>
-                    Done
-                  </button>
-                  <button className="flow-list__action flow-list__action--focus" type="button" onClick={() => onAction(entry.thought.id, 'focus')}>
-                    Focus
-                  </button>
-                  <button className="flow-list__action flow-list__action--archive" type="button" onClick={() => onAction(entry.thought.id, 'archive')}>
-                    Archive
-                  </button>
+                <div className="flow-list__actions" role="group" aria-label="Thought quick actions">
+                  <button
+                    className="flow-list__action flow-list__action--done"
+                    type="button"
+                    onClick={() => onAction(entry.thought.id, 'done')}
+                    aria-label="Mark done"
+                  />
+                  <button
+                    className="flow-list__action flow-list__action--focus"
+                    type="button"
+                    onClick={() => onAction(entry.thought.id, 'focus')}
+                    aria-label="Move to Now"
+                  />
+                  <button
+                    className="flow-list__action flow-list__action--archive"
+                    type="button"
+                    onClick={() => onAction(entry.thought.id, 'archive')}
+                    aria-label="Archive thought"
+                  />
                 </div>
               ) : null}
             </li>
           );
         })}
-      </ul>
-    )}
-  </section>
-);
+        </ul>
+      )}
+    </section>
+  );
+};

@@ -1,2 +1,2 @@
 export { ThoughtCard } from './ThoughtCard';
-export type { Thought } from '@thoughtz/core';
+export type { Thought } from '@enso/core';

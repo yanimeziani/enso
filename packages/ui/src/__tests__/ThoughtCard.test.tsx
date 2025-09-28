@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import React from 'react';
-import { normalizeThought } from '@thoughtz/core';
+import { normalizeThought } from '@enso/core';
 import { describe, expect, it, vi } from 'vitest';
 import { ThoughtCard } from '../ThoughtCard';
 

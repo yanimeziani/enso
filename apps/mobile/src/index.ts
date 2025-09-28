@@ -1,1 +1,1 @@
-export { ThoughtzMobileApp } from './App';
+export { EnsoMobileApp } from './App';

@@ -209,6 +209,13 @@ App Structure:
 - **Incremental search**: Real-time filtering with debouncing
 - **Background sync**: Non-blocking data synchronization
 
+### 7.3 AI Assistant Layer
+
+- **Local-first suggestions**: FastAPI proxies AI calls through `/api/ai/*`, defaulting to stub mode for development.
+- **Configurable runners**: Supports on-device inference (Ollama/llama.cpp) or remote endpoints selected via `AI_MODE`.
+- **Asynchronous delivery**: Frontend consumes suggestions through a dedicated AI client and debounced hooks to keep UI responsive.
+- **Graceful fallback**: When AI is disabled or unavailable, the capture flow operates as a standard note-taker with clear messaging.
+
 ---
 
 ## 8. Development Phases
@@ -226,6 +233,7 @@ App Structure:
 - Advanced search and filtering
 - Tag system implementation
 - Performance optimizations
+- AI service scaffolding (FastAPI endpoints, shared client, and configuration surface)
 
 **Deliverable**: Cross-platform app with enhanced features
 
@@ -234,6 +242,7 @@ App Structure:
 - Voice input and advanced editing features
 - Data export/import functionality
 - Beta testing and user feedback integration
+- AI-assisted capture/search UX with explainable hints and opt-in controls
 
 **Deliverable**: Production-ready app for launch
 
@@ -252,8 +261,8 @@ App Structure:
 - **Rich media embedding**: Videos, complex images, or interactive content
 - **Advanced formatting**: Complex tables, charts, or presentation modes
 - **Integrations**: Third-party app connections (Slack, Notion, etc.)
-- **AI features**: Auto-completion, content generation, or smart suggestions
 - **Public sharing**: Social features or public note sharing
+- **Generative authoring**: Fully automated drafting of notes or long-form content
 
 ### Future Consideration Features
 - **Team collaboration**: Shared folders and collaborative editing

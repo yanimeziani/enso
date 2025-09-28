@@ -1,0 +1,11 @@
+fastapi<0.112,>=0.111
+uvicorn[standard]<0.31,>=0.30
+sqlalchemy<2.1,>=2.0
+pydantic<3.0,>=2.7
+python-multipart>=0.0.9
+alembic<1.15,>=1.13
+
+[test]
+pytest<9,>=8
+pytest-asyncio<0.24,>=0.23
+httpx<0.28,>=0.27
